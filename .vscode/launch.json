@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "PowerShell Launch Current File",
             "script": "${file}",
-            "args": ["-dirPaths C:\\Users\\dportnenkov\\Desktop\\Dataset -fileCount 1000 -DataSize 1MB"],
+            "args": ["-dirPaths C:\\Users\\dportnenkov\\Desktop\\Dataset -fileCount 100000 -DataSize 1MB"],
             "cwd": "${file}"
         },
         {

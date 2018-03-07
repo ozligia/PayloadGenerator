@@ -314,11 +314,10 @@ function Main{
 
     #If -dirPath specified, preinit files list
     if($Files.Count -le 0){
-        foreach($dirPath in $dirPaths){
-            foreach($i in 1..$fileCount){
-                $Files += "$dirPath\$i.tmp"
-            }
-        }
+       $Files = New-Object System.String[]($fileCount);
+       for($i = 0; $i -lt $fileCount; $i++){
+           $Files[$i] = "$dirPath\$($i+1).tmp";
+       }
     }
 
     #timer to stop script if exceding target script time
