@@ -220,31 +220,42 @@ function CalcMd5{
         $hash = [System.BitConverter]::ToString($md5.ComputeHash($fstream));
         $hash = $hash.Replace(“-“,””);
     }
+    Write-Host "MD5 for $filePath was calculated in $("{0:N2}" -f $res.TotalSeconds) sec." -ForegroundColor Yellow;
     $fstream.Close();
+    return @{"$hash" = "$filePath"};
+}
 
-    #Update MD5 file
+function UpdateMd5File {
+    Param(
+        [hashtable]$HashRecords
+    )
+    #Read existing MD5 file.
     $md5FileContent = New-Object -TypeName System.Collections.ArrayList;
     try{
         $content = Get-Content -Path "$(Split-Path $filePath)\CHECKSUM.md5";
         if($content.Count -eq 1){
-            $md5FileContent.Add($content);
+            $null = $md5FileContent.Add($content);
         }else{
             foreach($str in $content){
-                $md5FileContent.Add($str);
+                $null = $md5FileContent.Add($str);
             }
         }
     }catch{}
-    $relFilePath = ".\$(Split-Path -Path $filePath -Leaf)";
-    $newMd5String = "$hash $relFilePath";
-    for($index = 0; $index -lt $md5FileContent.Count; $index++){
-        if($md5FileContent[$index].Contains("$relFilePath")){
-            $md5FileContent.RemoveAt($index);
-            break;
+ 
+    foreach($key in $HashRecords.Keys){
+        $relFilePath = ".\$(Split-Path -Path "$($HashRecords[$key])" -Leaf)";
+        $newMd5String = "$($key) $relFilePath";
+        
+        for($index = 0; $index -lt $md5FileContent.Count; $index++){
+            if($md5FileContent[$index].Contains("$relFilePath")){
+                $md5FileContent.RemoveAt($index);
+                break;
+            }
         }
+        $null = $md5FileContent.Add($($newMd5String));
     }
-    $md5FileContent.Add($($newMd5String));
     Set-Content -Path "$(Split-Path $filePath)\CHECKSUM.md5" -Encoding ascii -Value $md5FileContent -Force;
-    Write-Host "MD5 for $filePath was calculated in $("{0:N2}" -f $res.TotalSeconds) sec." -ForegroundColor Yellow;
+    Write-Host "MD5 file updated, $($HashRecords.Count) records were added.";
 }
 
 #Main
@@ -315,6 +326,7 @@ function Main{
     $avLoopExecTime = New-TimeSpan;
     $safetyMargin = New-TimeSpan -Seconds 30;
 
+    $hashRecords = @{};
     foreach($filePath in $Files){
         $loopExecTime = Measure-Command{
             if(-not $Update){
@@ -324,7 +336,7 @@ function Main{
             }
             if($res -eq $true){
                 if(-not $SkipMd5){
-                    CalcMd5 -filePath $filePath;
+                    $hashRecords += CalcMd5 -filePath $filePath;
                 }
             }
         }
@@ -341,6 +353,9 @@ function Main{
         }
         Write-Host "Time left: $(($TargetScriptTime-$sw.Elapsed-$safetyMargin).TotalSeconds) seconds, including safety margin with $($safetyMargin.TotalSeconds) seconds" -ForegroundColor Yellow;
     }
+
+    UpdateMd5File -HashRecords $hashRecords;
+
     $sw.Stop();
 }
 
