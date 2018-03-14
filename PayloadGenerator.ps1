@@ -114,7 +114,7 @@ function Write-Log{
         $LogFilePath
     )
     if(-not(Test-Path -Path (Split-Path -Path $LogFilePath))){
-        $res = New-Item -Path $LogFilePath -ItemType File -Force;
+        $null = New-Item -Path $LogFilePath -ItemType File -Force;
     }
     Out-File -InputObject "$([DateTime]::Now) $Object" -FilePath $LogFilePath -Append -Encoding ascii;
 }
@@ -131,7 +131,7 @@ function GenerateFile{
     }
 
     if($StartOffset -gt 0){
-        $res = $fstream.Seek($StartOffset,[System.IO.SeekOrigin]::Begin);
+        $null = $fstream.Seek($StartOffset,[System.IO.SeekOrigin]::Begin);
     }
 
     Write-Host "Generating file $filePath, requested size $($DataSize) $Units..." -ForegroundColor Yellow;
@@ -141,6 +141,7 @@ function GenerateFile{
         Write-Host "DataSize was less than BlockSize, BlockSize changed accordingly" -ForegroundColor Yellow;
     }
     $buffer = New-Object -TypeName System.Byte[] ($BlockSize);
+    
     if($FillPattern){
         $buffer = New-Object -TypeName System.Byte[] ($BlockSize);
         [Byte[]]$fillBytes = [System.Text.Encoding]::Default.GetBytes($FillPattern);
@@ -149,18 +150,19 @@ function GenerateFile{
         }
     }
 
+    if($rng -eq $null){
+        $rng = New-Object -TypeName System.Random;
+    }
+
     $res = Measure-Command{
-        for($index = 0; $index -lt ($DataSize); $index+=$BlockSize){
-            Write-Debug "Index: $index";
+        for($index = 0; $index -lt $DataSize; $index += $BlockSize){
             if(-not($FillPattern)){
                 $rng.NextBytes($buffer);
             }
-            Write-Debug "randBufferLength: $($randBuffer.Count)";
             $fwriter.Write($buffer);
         }
         $fwriter.Close();
     }
-
     Write-Host "Generated $($dataSize) $Units of data to $filePath in $("{0:N2}" -f $res.TotalSeconds) sec." -ForegroundColor Yellow;
     return $true;
 }
@@ -214,7 +216,9 @@ function CalcMd5{
     Param([String]$filePath)
     Write-Host "Calculating MD5 for $filePath..." -ForegroundColor Yellow;
 
-    $md5 = New-Object -TypeName System.Security.Cryptography.MD5CryptoServiceProvider
+    if($md5 -eq $null){
+        $md5 = New-Object -TypeName System.Security.Cryptography.MD5CryptoServiceProvider
+    }
     $fstream = [System.IO.File]::Open($filePath,[System.IO.FileMode]::Open);
     $res = Measure-Command{
         $hash = [System.BitConverter]::ToString($md5.ComputeHash($fstream));
@@ -230,9 +234,9 @@ function UpdateMd5File {
         [hashtable]$HashRecords
     )
     #Read existing MD5 file.
-    $md5FileContent = New-Object -TypeName System.Collections.ArrayList;
     try{
         $content = Get-Content -Path "$(Split-Path $filePath)\CHECKSUM.md5";
+        $md5FileContent = New-Object -TypeName System.Collections.ArrayList($HashRecords.Count + $content.Count);
         if($content.Count -eq 1){
             $null = $md5FileContent.Add($content);
         }else{
@@ -309,8 +313,10 @@ function Main{
         }
     }
 
-    #init rand generator
+    #init global rand generator to speed up script
     $rng = New-Object -TypeName System.Random;
+    #init global hash object to speed up script
+    $md5 = New-Object -TypeName System.Security.Cryptography.MD5CryptoServiceProvider
 
     #If -dirPath specified, preinit files list
     if($Files.Count -le 0){
@@ -325,33 +331,36 @@ function Main{
     $avLoopExecTime = New-TimeSpan;
     $safetyMargin = New-TimeSpan -Seconds 30;
 
-    $hashRecords = @{};
-    foreach($filePath in $Files){
-        $loopExecTime = Measure-Command{
-            if(-not $Update){
-                $res = GenerateFile -filePath $filePath -DataSize $DataSize -StartOffset $StartOffset -BlockSize $BlockSize;
-            }else{
-                $res = UpdateFile -filePath $filePath -DataSize $DataSize -StartOffset $StartOffset -BlockSize $BlockSize;
-            }
-            if($res -eq $true){
-                if(-not $SkipMd5){
-                    $hashRecords += CalcMd5 -filePath $filePath;
+    $hashRecords = New-Object hashtable($Files.Count); #minor performance issue, set estimated capacity on init
+    $res = Measure-Command{
+        foreach($filePath in $Files){
+            $loopExecTime = Measure-Command{
+                if(-not $Update){
+                    $res = GenerateFile -filePath $filePath -DataSize $DataSize -StartOffset $StartOffset -BlockSize $BlockSize;
+                }else{
+                    $res = UpdateFile -filePath $filePath -DataSize $DataSize -StartOffset $StartOffset -BlockSize $BlockSize;
+                }
+                if($res -eq $true){
+                    if(-not $SkipMd5){
+                        $hashRecords += CalcMd5 -filePath $filePath;
+                    }
                 }
             }
-        }
-        #check if enough time
-        if($avLoopExecTime.TotalSeconds -eq 0){
-            $avLoopExecTime = $loopExecTime;
-        }
-        $avLoopExecTime = New-TimeSpan -Seconds ([Math]::Ceiling((($avLoopExecTime.TotalMilliSeconds+$loopExecTime.TotalMilliSeconds)/2/1000)));
-        Write-Host "Average time per item: $($avLoopExecTime.TotalSeconds) seconds" -ForegroundColor Yellow;
+            #check if enough time
+            if($avLoopExecTime.TotalSeconds -eq 0){
+                $avLoopExecTime = $loopExecTime;
+            }
+            $avLoopExecTime = New-TimeSpan -Seconds ([Math]::Ceiling((($avLoopExecTime.TotalMilliSeconds+$loopExecTime.TotalMilliSeconds)/2/1000)));
+            Write-Host "Average time per item: $($avLoopExecTime.TotalSeconds) seconds" -ForegroundColor Yellow;
 
-        if($TargetScriptTime-$sw.Elapsed-$avLoopExecTime-$safetyMargin -lt 0){
-            Write-Host "Generation stopped due to target execution time limitation" -ForegroundColor Red;
-            break;
+            if($TargetScriptTime-$sw.Elapsed-$avLoopExecTime-$safetyMargin -lt 0){
+                Write-Host "Generation stopped due to target execution time limitation" -ForegroundColor Red;
+                break;
+            }
+            Write-Host "Time left: $(($TargetScriptTime-$sw.Elapsed-$safetyMargin).TotalSeconds) seconds, including safety margin with $($safetyMargin.TotalSeconds) seconds" -ForegroundColor Yellow;
         }
-        Write-Host "Time left: $(($TargetScriptTime-$sw.Elapsed-$safetyMargin).TotalSeconds) seconds, including safety margin with $($safetyMargin.TotalSeconds) seconds" -ForegroundColor Yellow;
     }
+    Write-Output "Main loop: $($res.TotalMilliSeconds) milliseconds";
 
     UpdateMd5File -HashRecords $hashRecords;
 
