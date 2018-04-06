@@ -236,15 +236,16 @@ function UpdateMd5File {
     #Read existing MD5 file.
     try{
         $content = Get-Content -Path "$(Split-Path $filePath)\CHECKSUM.md5";
-        $md5FileContent = New-Object -TypeName System.Collections.ArrayList($HashRecords.Count + $content.Count);
-        if($content.Count -eq 1){
-            $null = $md5FileContent.Add($content);
-        }else{
-            foreach($str in $content){
-                $null = $md5FileContent.Add($str);
-            }
-        }
     }catch{}
+
+    $md5FileContent = New-Object -TypeName System.Collections.ArrayList($HashRecords.Count + $content.Count);
+    if($content.Count -eq 1){
+        $null = $md5FileContent.Add($content);
+    }else{
+        foreach($str in $content){
+            $null = $md5FileContent.Add($str);
+        }
+    }
  
     foreach($key in $HashRecords.Keys){
         $relFilePath = ".\$(Split-Path -Path "$($HashRecords[$key])" -Leaf)";
